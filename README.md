@@ -6,6 +6,28 @@ Scaffolder, validator, and test harness for local Model Context Protocol (MCP) s
 definitions honest (CI-gateable validation), and unit-test tool dispatch
 without a live MCP client. Zero runtime dependencies — pure Node + TypeScript.
 
+
+<!-- cognis:example:start -->
+## 🔎 Example output
+
+**Sample result format** _(illustrative values — run on your own data for real findings):_
+
+```
+{
+  "scaffolding": [
+    {
+      "name": "MyApp",
+      "namespace": "MyCompany",
+      "author": "John Doe",
+      "version": "1.0.0",
+      "description": "My awesome app"
+    }
+  ]
+}
+```
+
+<!-- cognis:example:end -->
+
 ## Install
 
 ```sh
