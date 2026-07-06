@@ -91,6 +91,18 @@ test("generated server module handles initialize + tools/call in-process", async
     assert.ok(Array.isArray(add.result.content));
     assert.equal(add.result.content[0].type, "text");
 
+    const structured = await mod.handleRequest({
+      jsonrpc: "2.0",
+      id: 31,
+      method: "tools/call",
+      params: { name: "add", arguments: { a: 1, b: 2 } },
+    });
+    assert.deepEqual(structured.result.structuredContent, { sum: 0 });
+    assert.deepEqual(
+      JSON.parse(structured.result.content[0].text),
+      structured.result.structuredContent
+    );
+
     // resource templates + read
     const tmpls = await mod.handleRequest({ jsonrpc: "2.0", id: 4, method: "resources/templates/list" });
     assert.equal(tmpls.result.resourceTemplates.length, 1);

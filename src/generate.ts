@@ -19,6 +19,7 @@
 
 import { MCP_PROTOCOL_VERSION } from "./types.js";
 import type {
+  JsonSchema,
   PromptDefinition,
   ResourceDefinition,
   ResourceTemplateDefinition,
@@ -55,15 +56,62 @@ function jsonModule(value: unknown, exportName = "default"): string {
  * Handler stubs                                                       *
  * ------------------------------------------------------------------ */
 
+function placeholderForSchema(schema: JsonSchema | undefined): unknown {
+  if (!schema) return {};
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+
+  const oneOf = Array.isArray(schema.oneOf) ? schema.oneOf : undefined;
+  const anyOf = Array.isArray(schema.anyOf) ? schema.anyOf : undefined;
+  const firstVariant = oneOf?.[0] ?? anyOf?.[0];
+  if (firstVariant && typeof firstVariant === "object") {
+    return placeholderForSchema(firstVariant as JsonSchema);
+  }
+
+  const type = Array.isArray(schema.type) ? schema.type.find((t) => t !== "null") : schema.type;
+  switch (type) {
+    case "object": {
+      const out: Record<string, unknown> = {};
+      const properties = schema.properties ?? {};
+      const required = Array.isArray(schema.required) ? schema.required : [];
+      for (const name of required) out[name] = placeholderForSchema(properties[name]);
+      return out;
+    }
+    case "array":
+      return [];
+    case "integer":
+    case "number":
+      return 0;
+    case "boolean":
+      return false;
+    case "null":
+      return null;
+    case "string":
+    default:
+      return "";
+  }
+}
+
 function toolHandlerFile(tool: ToolDefinition): GeneratedFile {
   const id = ident(tool.name);
   const isEcho = tool.name === "echo";
+  const outputPlaceholder =
+    tool.outputSchema !== undefined
+      ? JSON.stringify(placeholderForSchema(tool.outputSchema), null, 2) ?? "null"
+      : undefined;
   const body = isEcho
     ? `  // Sample implementation. Replace with your own logic.\n` +
       `  const text = String(args.text ?? "");\n` +
       `  return {\n` +
       `    content: [{ type: "text", text }],\n` +
       `    structuredContent: { text },\n` +
+      `  };`
+    : outputPlaceholder
+    ? `  // TODO: implement "${tool.name}" and replace this output placeholder.\n` +
+      `  // It is pre-shaped from the tool's required outputSchema properties.\n` +
+      `  const out = ${outputPlaceholder};\n` +
+      `  return {\n` +
+      `    content: [{ type: "text", text: JSON.stringify(out) }],\n` +
+      `    structuredContent: out,\n` +
       `  };`
     : `  // TODO: implement "${tool.name}". Return MCP tool-call content.\n` +
       `  //\n` +
