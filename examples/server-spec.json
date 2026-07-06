@@ -1,0 +1,76 @@
+{
+  "name": "weather-desk",
+  "version": "1.0.0",
+  "title": "Weather Desk",
+  "instructions": "A demo MCP server: read-only weather-style tools, a couple of resources, a resource template, prompts, and a bearer-auth hook. Defensive/sample data only.",
+  "tools": [
+    {
+      "name": "echo",
+      "title": "Echo",
+      "description": "Echo back the provided text.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "text": { "type": "string", "description": "Text to echo." } },
+        "required": ["text"]
+      },
+      "annotations": { "readOnlyHint": true }
+    },
+    {
+      "name": "current_conditions",
+      "title": "Current conditions",
+      "description": "Return sample current weather for a city (read-only demo).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "city": { "type": "string", "description": "City name." },
+          "units": { "type": "string", "enum": ["metric", "imperial"] }
+        },
+        "required": ["city"]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "city": { "type": "string" },
+          "temperature": { "type": "number" },
+          "conditions": { "type": "string" }
+        },
+        "required": ["city", "temperature", "conditions"]
+      },
+      "annotations": { "readOnlyHint": true, "openWorldHint": true }
+    }
+  ],
+  "resources": [
+    {
+      "uri": "info://about",
+      "name": "about",
+      "title": "About Weather Desk",
+      "description": "Static description of this demo server.",
+      "mimeType": "text/markdown"
+    }
+  ],
+  "resourceTemplates": [
+    {
+      "uriTemplate": "weather://{city}",
+      "name": "weather_by_city",
+      "title": "Weather by city",
+      "description": "Parameterized weather resource keyed by city.",
+      "mimeType": "application/json"
+    }
+  ],
+  "prompts": [
+    {
+      "name": "forecast_brief",
+      "title": "Forecast brief",
+      "description": "Ask the model to write a short forecast brief for a city.",
+      "arguments": [
+        { "name": "city", "description": "City to brief.", "required": true },
+        { "name": "tone", "description": "Optional tone.", "required": false }
+      ]
+    }
+  ],
+  "auth": {
+    "scheme": "bearer",
+    "tokenEnvVar": "WEATHER_DESK_TOKEN",
+    "note": "Bearer-token hook — disabled by default (allow-with-TODO)."
+  }
+}
