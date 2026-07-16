@@ -7,8 +7,12 @@
  *                        Scaffold a new MCP server project. With --spec, build
  *                        from a full ServerSpec; without it, a starter server
  *                        (one tool + one resource + one prompt).
- *   validate <file>      Validate a tools array (back-compat) or a full
+ *   validate <file> [--json]
+ *                        Validate a tools array (back-compat) or a full
  *                        ServerSpec; non-zero exit on errors (CI gate).
+ *   diff <old> <new> [--json]
+ *                        Compare two specs and classify each change as breaking
+ *                        or compatible; non-zero exit on a breaking change.
  *   list <file>          Pretty-print a tools array or ServerSpec.
  *   init-spec [file]     Write an example ServerSpec (default spec.json).
  *   --help               Show usage.
@@ -23,6 +27,7 @@ import {
   validateServerSpec,
   isServerSpec,
 } from "./validate.js";
+import { diffSpecs, formatDiff } from "./diff.js";
 import { EXAMPLE_SPEC } from "./spec.js";
 import { MCP_PROTOCOL_VERSION } from "./types.js";
 import type {
@@ -37,7 +42,11 @@ const USAGE = `mcpscaffold — scaffold, validate, and test MCP servers (spec ${
 Usage:
   mcpscaffold new <name> [--spec <spec.json>] [--dir <path>]
                                      Scaffold a new MCP server project
-  mcpscaffold validate <file>        Validate a tools array or ServerSpec (CI gate)
+  mcpscaffold validate <file> [--json]
+                                     Validate a tools array or ServerSpec (CI gate)
+  mcpscaffold diff <old> <new> [--json]
+                                     Compare two specs; non-zero exit on a
+                                     breaking change (compatibility CI gate)
   mcpscaffold list <file>            Pretty-print a tools array or ServerSpec
   mcpscaffold init-spec [file]       Write an example ServerSpec (default spec.json)
   mcpscaffold --help                 Show this help
@@ -115,11 +124,21 @@ function cmdNew(args: string[]): number {
 }
 
 function cmdValidate(args: string[]): number {
-  const file = args[0];
-  if (!file) fail("usage: mcpscaffold validate <file>");
+  const asJson = args.includes("--json");
+  const positional = args.filter((a) => !a.startsWith("-"));
+  const file = positional[0];
+  if (!file) fail("usage: mcpscaffold validate <file> [--json]");
   const parsed = readJson(file);
   const result = validateAny(parsed);
   const kind = isServerSpec(parsed) ? "ServerSpec" : "tool catalog";
+
+  if (asJson) {
+    process.stdout.write(
+      JSON.stringify({ ok: result.ok, kind, issues: result.issues }, null, 2) + "\n"
+    );
+    return result.ok ? 0 : 1;
+  }
+
   if (result.ok) {
     if (isServerSpec(parsed)) {
       const s = parsed as ServerSpec;
@@ -143,6 +162,48 @@ function cmdValidate(args: string[]): number {
     process.stderr.write(`  - ${where}: ${issue.message}\n`);
   }
   return 1;
+}
+
+function cmdDiff(args: string[]): number {
+  const asJson = args.includes("--json");
+  const positional = args.filter((a) => !a.startsWith("-"));
+  const [oldFile, newFile] = positional;
+  if (!oldFile || !newFile) {
+    fail("usage: mcpscaffold diff <old> <new> [--json]");
+  }
+  const before = readJson(oldFile);
+  const after = readJson(newFile);
+  for (const [label, value] of [
+    ["old", before],
+    ["new", after],
+  ] as const) {
+    if (typeof value !== "object" || value === null) {
+      fail(`${label} spec must be a ServerSpec object or a tools array`);
+    }
+  }
+  const diff = diffSpecs(
+    before as ServerSpec | ToolDefinition[],
+    after as ServerSpec | ToolDefinition[]
+  );
+
+  if (asJson) {
+    process.stdout.write(JSON.stringify(diff, null, 2) + "\n");
+    return diff.breaking ? 1 : 0;
+  }
+
+  if (diff.breaking) {
+    process.stderr.write(
+      `BREAKING: ${diff.summary.breaking} breaking change(s) from ${oldFile} to ${newFile}\n`
+    );
+    process.stderr.write(formatDiff(diff) + "\n");
+    return 1;
+  }
+  process.stdout.write(
+    diff.changes.length === 0
+      ? `OK: no surface changes between ${oldFile} and ${newFile}\n`
+      : `OK: ${diff.changes.length} compatible change(s), no breaking changes\n${formatDiff(diff)}\n`
+  );
+  return 0;
 }
 
 function cmdList(args: string[]): number {
@@ -231,6 +292,8 @@ function main(argv: string[]): number {
       return cmdNew(rest);
     case "validate":
       return cmdValidate(rest);
+    case "diff":
+      return cmdDiff(rest);
     case "list":
       return cmdList(rest);
     case "init-spec":
