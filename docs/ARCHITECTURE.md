@@ -14,7 +14,9 @@ dependency-free (Node built-ins only); the CLI is a thin argument parser over it
 | `spec.ts` | `starterSpec(name)` (minimal one-of-each spec) and `EXAMPLE_SPEC` (richer multi-primitive + bearer-auth example) used by `init-spec`, docs, and demos. |
 | `generate.ts` | **The generation pipeline.** `generateServerFiles(spec)` — a pure function returning `GeneratedFile[]` (path + contents) for the whole project. No filesystem side effects, so the generated strings are unit-testable. |
 | `scaffold.ts` | The filesystem writer: `scaffoldFromSpec(spec, dir)` and the back-compatible `scaffold({name, dir})` (builds a starter spec). Writes each `GeneratedFile` to disk. |
-| `cli.ts` | Commands `new`, `validate`, `list`, `init-spec`, `--help`. |
+| `uritemplate.ts` | Dependency-free RFC 6570 *level-1* helpers: `matchUriTemplate()` (concrete URI → `{var}` bindings, or `null`), `expandUriTemplate()` (bindings → URI, percent-encoded), `templateVariables()`, `isUriTemplate()`. The same matching behavior the generated server bakes in, exposed as a reusable library. |
+| `diff.ts` | Backward-compatibility analysis: `diffSpecs(before, after)` classifies every change between two specs (or two tool catalogs) as breaking or compatible, and `formatDiff()` renders it. Pure. See [COMPATIBILITY.md](COMPATIBILITY.md). |
+| `cli.ts` | Commands `new`, `validate` (`--json`), `diff` (`--json`), `list`, `init-spec`, `--help`. |
 | `index.ts` | Public exports. |
 
 ## The generation pipeline

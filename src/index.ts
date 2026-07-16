@@ -72,3 +72,19 @@ export {
 } from "./generate.js";
 
 export { starterSpec, EXAMPLE_SPEC } from "./spec.js";
+
+export {
+  matchUriTemplate,
+  expandUriTemplate,
+  templateVariables,
+  isUriTemplate,
+} from "./uritemplate.js";
+
+export {
+  diffSpecs,
+  formatDiff,
+  type SpecDiff,
+  type SpecChange,
+  type ChangeKind,
+  type DiffTarget,
+} from "./diff.js";

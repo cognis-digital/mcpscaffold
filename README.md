@@ -101,10 +101,13 @@ The generated `initialize` response is a real MCP handshake:
 | Command | What it does |
 | --- | --- |
 | `new <name> [--spec <spec.json>] [--dir <path>]` | Scaffold a server. With `--spec`, generate from a full `ServerSpec`; without it, a starter server (one tool + one resource + one template + one prompt). |
-| `validate <file>` | Validate a bare tools array (back-compat) **or** a full `ServerSpec`, with MCP-conformance checks. Non-zero exit on any issue — drops straight into CI. |
+| `validate <file> [--json]` | Validate a bare tools array (back-compat) **or** a full `ServerSpec`, with MCP-conformance checks. Non-zero exit on any issue — drops straight into CI. `--json` prints a machine-readable `{ ok, kind, issues }` document. |
+| `diff <old> <new> [--json]` | Compare two specs and classify each change as **breaking** or **compatible** for existing clients. Non-zero exit on any breaking change — a compatibility CI gate. `--json` prints the full `SpecDiff`. |
 | `list <file>` | Pretty-print a tools array or `ServerSpec`. |
 | `init-spec [file]` | Write an example `ServerSpec` (default `spec.json`). |
 | `--help` | Usage. |
+
+Full command and library walkthrough: [`docs/USAGE.md`](docs/USAGE.md).
 
 ### validate as a CI gate
 
@@ -117,6 +120,26 @@ FAIL: tool catalog — 3 issue(s)
 $ echo $?
 1
 ```
+
+### diff as a compatibility gate
+
+An MCP server is a contract, and some spec changes silently break existing
+clients — a removed tool, a newly-required argument, a changed input type.
+`diff` classifies every change and fails the build on a breaking one:
+
+```sh
+$ mcpscaffold diff v1.json v2.json
+BREAKING: 1 breaking change(s) from v1.json to v2.json
+  BREAKING  - [tool] tool "word_count" removed
+  ok        ~ [server] version changed "1.0.0" → "2.0.0"
+
+0 added, 1 removed, 1 changed — 1 breaking
+$ echo $?
+1
+```
+
+The full rule table (what counts as breaking vs compatible) and a ready-to-paste
+CI recipe are in [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
 
 ## The library
 
@@ -154,6 +177,26 @@ await registry.dispatch("add", { a: "two" });   // { ok: false, error: DispatchE
 const files = generateServerFiles(mySpec);
 ```
 
+It also exposes the compatibility differ and the RFC 6570 level-1 URI-template
+helpers used when implementing resource-template handlers:
+
+```ts
+import {
+  diffSpecs,
+  formatDiff,
+  matchUriTemplate,
+  expandUriTemplate,
+  templateVariables,
+} from "@cognis-digital/mcpscaffold";
+
+const diff = diffSpecs(previousSpec, nextSpec);
+if (diff.breaking) throw new Error(formatDiff(diff));
+
+matchUriTemplate("greeting://{who}", "greeting://ada"); // { who: "ada" }
+expandUriTemplate("greeting://{who}", { who: "Ada L" }); // "greeting://Ada%20L"
+templateVariables("file:///{dir}/{name}");              // ["dir", "name"]
+```
+
 ## MCP conformance
 
 Generated servers implement, over the stdio transport:
@@ -168,6 +211,48 @@ URIs via a level-1 RFC 6570 matcher; prompts return `messages`. See
 [`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md) for the full method/primitive
 matrix and what is intentionally out of scope (HTTP transport, subscriptions,
 sampling/elicitation, pagination).
+
+## Architecture
+
+`mcpscaffold` is a small, pure TypeScript library plus a thin CLI over it. The
+spec is the single source of truth; validation, generation, and diffing all
+derive from it.
+
+```
+ServerSpec ──► validateServerSpec() ──► generateServerFiles() ──► GeneratedFile[] ──► scaffoldFromSpec() writes to disk
+  (input)         (conformance)            (pure, in memory)         (path+contents)          (fs)
+```
+
+| Module | Responsibility |
+| --- | --- |
+| `types.ts` | The MCP primitive type model and `MCP_PROTOCOL_VERSION`. |
+| `jsonschema.ts` | Dependency-free JSON Schema subset: `checkSchemaShape()` (usable schema?) and `validate()` (does data conform?). |
+| `validate.ts` | MCP-conformance validation of every primitive and the whole `ServerSpec`. |
+| `registry.ts` | Runtime harnesses (`ToolRegistry`/`ResourceRegistry`/`PromptRegistry`) to unit-test server logic without a live client. |
+| `generate.ts` | The pure generation pipeline: `generateServerFiles(spec)` → files in memory. |
+| `scaffold.ts` | The filesystem writer. |
+| `uritemplate.ts` | Reusable RFC 6570 level-1 URI-template match/expand helpers. |
+| `diff.ts` | Backward-compatibility analysis (`diffSpecs`). |
+| `cli.ts` | The command-line entry point. |
+
+Full details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The roadmap is in
+[`ROADMAP.md`](ROADMAP.md).
+
+## Configuration reference (`ServerSpec`)
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `name` | string | yes | Server + package name; also the scaffold directory. |
+| `version` | string | yes | Semantic version string. |
+| `title` | string | no | Human-readable display title. |
+| `instructions` | string | no | Free text surfaced in the `initialize` result. |
+| `tools` | `ToolDefinition[]` | no | `name`, `description`, `inputSchema`; optional `title`/`outputSchema`/`annotations`. |
+| `resources` | `ResourceDefinition[]` | no | `uri`, `name`; optional `title`/`description`/`mimeType`. |
+| `resourceTemplates` | `ResourceTemplateDefinition[]` | no | `uriTemplate` (must contain a `{var}`), `name`, optional metadata. |
+| `prompts` | `PromptDefinition[]` | no | `name`; optional `description`/`title`/`arguments[]`. |
+| `auth` | `AuthConfig` | no | `scheme` (`"none"` \| `"bearer"`), optional `tokenEnvVar`, `note`. Allow-with-TODO by default. |
+
+Names match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`; resource URIs must be absolute.
 
 ## Auth (defensive)
 
@@ -189,7 +274,10 @@ Numbers below were measured on this repo (Node 24.11, Windows), not estimated:
 - **Generated project ships a green 6-test `node:test` suite** out of the box.
 - **Cold `node src/server.mjs` → `initialize` response: median ~95 ms** (5 runs:
   86–117 ms), start included.
-- Library test suite: **43 tests, all green** (`npm test`).
+- Library test suite: **105 tests, all green** (`npm test`) — covering
+  validation, the JSON Schema data validator, registries, generation,
+  spawn-based server integration, URI-template matching, spec diffing, and the
+  CLI end-to-end.
 
 Reproduce: `npm test`, then `node demos/scaffold_and_smoke.mjs`.
 
@@ -205,6 +293,34 @@ demos/run_all.ps1
 - `demos/validate_gate.mjs` — `validate` as a CI gate (valid → exit 0, invalid → non-zero).
 - `demos/scaffold_and_smoke.mjs` — scaffold from `demos/example-spec.json`, then
   run the generated smoke test + tests. Both exit 0.
+
+## FAQ
+
+**Does the generated server (or the library) have runtime dependencies?**
+No. Both run on Node built-ins only. `devDependencies` are limited to TypeScript
+and `@types/node` for building.
+
+**Do I have to use a full spec?** No. `mcpscaffold new my-server` (no `--spec`)
+emits a complete starter server with one tool, resource, template, and prompt.
+Use `init-spec` to get a richer example spec to edit.
+
+**Can `validate` still read my old bare tools array?** Yes. `validate` (and
+`diffSpecs`) accept either a `ToolDefinition[]` catalog (back-compat) or a full
+`ServerSpec`, and detect which you passed.
+
+**What MCP version does it target?** `2025-06-18`. See
+[`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md) for the method/primitive
+matrix and what is intentionally out of scope (HTTP transport, subscriptions,
+sampling/elicitation, pagination).
+
+**How do I catch a breaking change before I ship it?** Run
+`mcpscaffold diff <previous-spec> <current-spec>` in CI; it exits non-zero on any
+breaking change. See [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
+
+**Is the bearer-auth example a real auth check?** No — it is a commented example
+that shows where a real check belongs. The default hook allows every request
+with a TODO marker; it is never a bypass. The stdio transport has no HTTP
+headers, so a real bearer check belongs in an HTTP transport.
 
 ## Scope
 
